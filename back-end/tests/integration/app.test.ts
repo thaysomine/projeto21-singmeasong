@@ -2,13 +2,15 @@ import supertest from "supertest";
 
 import app from "../../src/app.js";
 import { recommendationFactory } from "../integration/factories/recommendationFactory.js";
-import { deleteAllRecommendations, createRecommendation } from "../integration/factories/scenarioFactoroy.js";
+import { createRecommendation } from "./factories/scenarioFactory.js";
 import { prisma} from "../../src/database.js";
 
 const request = supertest(app);
 
 beforeEach(async () => {
-    await deleteAllRecommendations();
+    await prisma.$transaction([
+        prisma.$executeRaw`TRUNCATE TABLE recommendations RESTART IDENTITY`
+    ]);
 });
 
 describe("POST /recommendations", () => {
@@ -24,9 +26,9 @@ describe("POST /recommendations", () => {
     });
 
     it("should throw an error if the recommendation already exists", async () => {
-        const recommendation = createRecommendation();
-        const { name, youtubelink } = recommendation[0];
-        const response = await request.post("/recommendations").send({ name, youtubelink });
+        const recommendation = await createRecommendation();
+        const { name, youtubeLink } = recommendation[0];
+        const response = await request.post("/recommendations").send({ name, youtubeLink });
         expect(response.status).toBe(409);
     });
 
@@ -60,7 +62,7 @@ describe("POST /recommendations", () => {
 
 describe("GET /recommendations", () => {
     it("should get 10 recommendations", async () => {
-        await createRecommendation(10);
+        await createRecommendation(15);
         const response = await request.get("/recommendations");
         expect(response.status).toBe(200);
         expect(response.body).toHaveLength(10);
@@ -68,7 +70,7 @@ describe("GET /recommendations", () => {
 
     describe("GET /recommendations by id", () => {
         it("should get a recommendation by id", async () => {
-            const recommendation = createRecommendation();
+            const recommendation = await createRecommendation();
             const { id } = recommendation[0];
             const response = await request.get(`/recommendations/${id}`);
             expect(response.status).toBe(200);
@@ -83,10 +85,10 @@ describe("GET /recommendations", () => {
 
     describe("GET /recommendations/random", () => {
         it("should get a random recommendation", async () => {
-            await createRecommendation(1);
+            const recommendation = await createRecommendation(1);
             const response = await request.get("/recommendations/random");
             expect(response.status).toBe(200);
-            expect(response.body).toHaveLength(1);
+            expect(response.body).toEqual(recommendation[0]);
         });
 
         it("should not get a random recommendation if there are no recommendations", async () => {
@@ -97,7 +99,7 @@ describe("GET /recommendations", () => {
 
     describe("GET /recommendations/top", () => {
         it("should get the top 10 recommendations", async () => {
-            await createRecommendation(10, 200);
+            await createRecommendation(10, 50);
             const response = await request.get("/recommendations/top/10");
             expect(response.status).toBe(200);
             expect(response.body).toHaveLength(10);
@@ -105,7 +107,7 @@ describe("GET /recommendations", () => {
 
         it("should not get the top recommendations if there are no recommendations", async () => {
             const response = await request.get("/recommendations/top/10");
-            expect(response.status).toBe(404);
+            expect(response.status).toBe(200);
             expect(response.body).toHaveLength(0);
         });
     });
@@ -113,12 +115,13 @@ describe("GET /recommendations", () => {
 
 describe("POST /upvote", () => {
     it("should upvote a recommendation", async () => {
-        const recommendation = createRecommendation();
+        const recommendation = await createRecommendation();
         const { id } = recommendation[0];
-        const response = await request.post(`recommendations/${id}/upvote`);
+        const response = await request.post(`/recommendations/${id}/upvote`);
         const upvotedRecommendation = await prisma.recommendation.findUnique({
             where: { id },
         });
+        
         expect(response.status).toBe(200);
         expect(upvotedRecommendation.score).toBe(1);
     });
@@ -131,9 +134,9 @@ describe("POST /upvote", () => {
 
 describe("POST /downvote", () => {
     it("should downvote a recommendation", async () => {
-        const recommendation = createRecommendation();
+        const recommendation = await createRecommendation();
         const { id } = recommendation[0];
-        const response = await request.post(`recommendations/${id}/downvote`);
+        const response = await request.post(`/recommendations/${id}/downvote`);
         const downvotedRecommendation = await prisma.recommendation.findUnique({
             where: { id },
         });
@@ -143,9 +146,9 @@ describe("POST /downvote", () => {
     });
 
     it("should remove recommendations with a score less than -5", async () => {
-        const recommendation = createRecommendation(1, -6);
+        const recommendation = await createRecommendation(1, -6);
         const { id } = recommendation[0];
-        const response = await request.post(`recommendations/${id}/downvote`);
+        const response = await request.post(`/recommendations/${id}/downvote`);
         const downvotedRecommendation = await prisma.recommendation.findUnique({
             where: { id },
         });
